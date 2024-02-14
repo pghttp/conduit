@@ -12,7 +12,7 @@ else's control. Consequently, some architectural decisions are different, as are
 
 The scope of the explanations and understanding is also different for a frontend-only developer: here we are concerned
 with the whole end-to-end system, and while knowledge of database design and SQL is not necessary, it is a part
-of the consideration of this way of working, and now having that knowledge might make it harder to evaluate and 
+of the consideration of this way of working, and not having that knowledge might make it harder to evaluate and 
 understand the differences and benefits of elm-pghttp. The tooling will alleviate these concerns, but at present
 it is not ready.
 
