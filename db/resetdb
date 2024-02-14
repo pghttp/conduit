@@ -1,0 +1,190 @@
+#! /bin/bash
+genkey () {
+  (LC_ALL=C tr -dc '[:graph:]"' </dev/urandom | tr -d \" |  head -c 32; echo)
+}
+
+BASEPATH=$( cd $(dirname $0) ; pwd -P )
+SRCDIR=$1
+HOST=${PGHOST:-localhost}
+PORT=${PGPORT:-5432}
+
+if [ -z "$SRCDIR" ]
+then
+  echo "Please choose one of the available databases to reset"
+  exit 1
+else
+  SRCDIR=$(basename $SRCDIR)
+fi
+SOURCE_PATH=$BASEPATH/$SRCDIR
+if [ ! -d "$SOURCE_PATH" ]
+then
+  echo "Database directory ${SOURCE_PATH} does not exist"
+  exit 1
+fi
+echo "The database files are in "$SOURCE_PATH
+
+if [ -f "$SOURCE_PATH/db.env" ]
+  then
+    source $SOURCE_PATH/db.env
+fi
+
+if [ -z "$DB" ]
+  then
+    DB=$SRCDIR
+fi
+echo "(re)building database '${DB}' on ${HOST}:${PORT}"
+echo
+echo
+
+# Options
+# a) Owner role does not exist in db
+#   1) We want to recreate a specific password
+#       -> Specify OWNER_ROLE_PASSWORD in db.env
+#   2) We want a random password
+#       -> Don't specify it in db.env file
+#          => GENERATED_PASSWORD=yes
+# b) Owner role exists in db
+#   1) We don't want to change password
+#       -> Don't specify it in db.env file
+#          => GENERATED_PASSWORD=yes
+#   2) We want to set a specific password
+#       -> Specify OWNER_ROLE_PASSWORD in db.env
+
+if [ -z "$OWNER_ROLE" ]
+  then
+    OWNER_ROLE=${DB}_db_owner
+fi
+
+if [ -z "$OWNER_ROLE_PASSWORD" ]
+  then
+    GENERATED_PASSWORD=yes
+    OWNER_ROLE_PASSWORD=`genkey`
+fi
+
+if [ -z "$ACCESS_ROLE" ]
+  then
+    ACCESS_ROLE=${DB}_db_access
+fi
+
+if [ -z "$PUBLIC_ROLE" ]
+  then
+    PUBLIC_ROLE=${DB}_db_public
+fi
+
+psql -qX <<EOF
+
+SELECT pg_terminate_backend(pg_stat_activity.pid)
+FROM pg_stat_activity
+WHERE pg_stat_activity.datname = '$DB'
+  AND pid <> pg_backend_pid();
+
+drop database if exists "$DB";
+
+DO \$\$
+-- Case a1: create the role if it doesn't exist
+-- Case a2: create the role and set the password we want
+-- Case b1: We won't create new user if it exists and won't change the password
+BEGIN
+   IF NOT EXISTS (
+      SELECT *
+      FROM   pg_catalog.pg_user
+      WHERE  usename = '$OWNER_ROLE')
+   THEN
+      create role $OWNER_ROLE login password '$OWNER_ROLE_PASSWORD';
+   END IF;
+END;
+\$\$;
+
+DO \$\$
+BEGIN
+   IF NOT EXISTS (
+      SELECT *
+      FROM   pg_catalog.pg_group
+      WHERE  groname = '$ACCESS_ROLE')
+   THEN
+      create role $ACCESS_ROLE with NOLOGIN;
+   END IF;
+END;
+\$\$;
+
+DO \$\$
+BEGIN
+   IF NOT EXISTS (
+      SELECT *
+      FROM   pg_catalog.pg_group
+      WHERE  groname = '$PUBLIC_ROLE')
+   THEN
+      create role $PUBLIC_ROLE with NOLOGIN;
+   END IF;
+END;
+\$\$;
+
+create database "$DB"
+with owner = $OWNER_ROLE
+	encoding = 'UTF8';
+
+EOF
+
+# Case b2: if we specified the password, GENERATED_PASSWORD will be zero
+# so change it.
+if [ -z "$GENERATED_PASSWORD" ]
+  then
+psql -qX <<EOF
+DO \$\$
+BEGIN
+  alter role ${OWNER_ROLE} with password '$OWNER_ROLE_PASSWORD';
+END;
+\$\$;
+EOF
+fi
+
+# Case a2, b1: We changed the password, write down the new one
+if [ ! -z "$GENERATED_PASSWORD" ]
+  then
+cat > $SOURCE_PATH/db.env <<EOF
+DB="$DB"
+OWNER_ROLE="$OWNER_ROLE"
+OWNER_ROLE_PASSWORD="$OWNER_ROLE_PASSWORD"
+
+ACCESS_ROLE="$ACCESS_ROLE"
+PUBLIC_ROLE="$PUBLIC_ROLE"
+EOF
+fi
+
+echo "Created database ${DB} on ${HOST}:${PORT}"
+echo "Owner ${OWNER_ROLE} with password ${OWNER_ROLE_PASSWORD}"
+echo "Access role ${ACCESS_ROLE}. Add users to this role to access the database."
+echo "Public access role ${PUBLIC_ROLE}. Add users to this role to access the database without login."
+echo
+echo "Stored in ${DB}/db.env"
+echo
+echo
+
+# Expects a list of ddl files in order to be applied. The easy way to seed the file is to list all .sql
+# files:
+#   find -s  ddl -type file -name "*.sql" > ddlfiles
+# Then edit and sort the files as necessary.
+
+DDL_FILES=$SOURCE_PATH/ddlfiles
+
+if [ ! -f "$DDL_FILES" ]
+  then
+    echo "Could not find the list of ddl files to apply. Please make sure the files are listed in a file called 'ddlfiles'"
+    exit -1
+fi
+
+# http://unix.stackexchange.com/questions/24260/reading-lines-from-a-file-with-bash-for-vs-while/24278#24278
+while read -u 3 FILE; do
+    echo "========================="
+    echo "Applying ddl/$FILE"
+    PGDATABASE=$DB PGOPTIONS='-c client_min_messages=WARNING' psql --set=owner_role="$OWNER_ROLE" --set=access_role="$ACCESS_ROLE" --set=public_role="$PUBLIC_ROLE" -v "ON_ERROR_STOP=1" -qX < $SOURCE_PATH/$FILE
+    rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+done 3< $DDL_FILES
+
+if [ -f "$SOURCE_PATH/99_default_data.sql" ]
+then
+  echo "========================="
+  echo "Loading default data"
+  PGDATABASE=$DB PGOPTIONS='-c client_min_messages=WARNING' psql --set=owner_role="$OWNER_ROLE" --set=access_role="$ACCESS_ROLE"  --set=public_role="$PUBLIC_ROLE" -v "ON_ERROR_STOP=1" -qX < $SOURCE_PATH/99_default_data.sql
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+fi
