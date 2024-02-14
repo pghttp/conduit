@@ -1,0 +1,7 @@
+elm-stuff/
+node_modules/
+elm-watch.json
+package.json
+package-lock.json
+*.env
+elm.js
