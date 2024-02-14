@@ -1,0 +1,17 @@
+body>footer {
+    background-color: aliceblue;
+    padding: 1rem;
+}
+
+.horizontal {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 0.5rem;
+}
+
+.horizontal a {
+    text-decoration: none;
+    background-color: aliceblue;
+    border-radius: 5px;
+    padding: 0.125rem 0.5rem;
+}
