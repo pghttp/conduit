@@ -70,7 +70,7 @@ at least marked as auto-generated (when code editing tools allow for such action
 
 To run this, one needs:
 
-1. The database (run with `./resetdb` to set it up, unless you have your own flow). 
+1. The database (run with `./resetdb conduit` from the `Db` folder to set it up, unless you have your own flow). 
 2. pg-proxy: the Nginx module that frames pg protocol with http
 3. Published Api: functions exposed from the database, from which elm-pghttp generates the `src/db` code.
 3. Elm code in this repo.
@@ -94,7 +94,7 @@ goes into more detail about those.
 
 The application assumes cookie authentication--this makes more sense than using something like JWT, since we're controlling
 both ends of the communication, and there's no need to burden the programmer with handling the token. The browser takes care
-of the cookies, and the web server knows what to do. That's not to say that once cannot implement any other auth method--that's down 
+of the cookies, and the web server knows what to do. That's not to say that one cannot implement any other auth method--that's down 
 to chosen HTTP architecture and has nothing to do with elm-pghttp. That's one advantage of this method compared to similar inventions
 like postgrest: HTTP concerns are isolated to HTTP and work as usual (including compression, content negotiaton, load balancing, etc),
 while elm-pghttp deals with database concerns (and HTTP doesn't care about those at all).
