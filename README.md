@@ -109,18 +109,17 @@ through functions--this is again a developer preference as it somewhat simplifie
 code and the way paging information is obtained is also purely a stylistic choice. One could do that in different ways without having any
 impact on pghttp.
 
-We've separated the public and protected schema, as we want to emphasize the peformance concerns, which are different when exposing the database
-to the public as opposed to named, authenticated users. (Frankly, I'd never expose the database content like this direclty to the public, but 
-this is the demo, and the DoS concerns are out of scope). 
+We've separated the public and protected schema as we want to emphasize the peformance concerns, which are different when exposing the database
+to the public as opposed to named, authenticated users. 
 
 For example, the public listing of articles does not check for 'followed' flag, since obviously we can't identify the user. Another example is paging 
-as a separate function, as there's no need to aimlessly count in every request for a page of 
-articles or tags. (RealWorld API samples return the count on every request for a page of articles; likely because their API requests are expected to
-be slow, or it is harder to request two pieces of data than parse a complex object). Considering the frequency of updates of a typical content site, 
-one assumes that listing/reading will be 100x more frequent than the number of articles changing. 
+as a separate function, as there's no need to aimlessly count rows on every request for a page of articles or tags. Considering the frequency of 
+updates of a typical content site, one assumes that listing/reading will be much more frequent than the number of articles changing.  
+(RealWorld API samples return the count on every request for a page of articles; likely because their API requests are expected to
+be slow, or it is harder to request two pieces of data than parse a complex object). 
 
 There are other minor details, but none of these make a difference in such a small example; the goal is to hint at the fact 
 that pghttp allows having multiple APIs that are separated along the lines of performance and security concerns, among others.
 
 Despite having a public and non-public schema in the database, the mapping to pghttp APIs is not driven by schemas. One can expose functions and queries
-from different schemas into an API. What is important that each API connects with relevant security privileges (as determined by roles `_db_owner`, `_db_access`, `_db_public`) to avoid security issues.
+from different schemas into an API. What is important that each API connects with relevant privileges (as determined by roles `_db_owner`, `_db_access`, `_db_public`) to avoid security issues.
