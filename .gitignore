@@ -5,3 +5,4 @@ package.json
 package-lock.json
 *.env
 elm.js
+dist/

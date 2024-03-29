@@ -1,0 +1,78 @@
+#! /bin/bash
+genkey () {
+  (LC_ALL=C tr -dc '[:graph:]"' </dev/urandom | tr -d \" |  head -c 32; echo)
+}
+
+BASEPATH=$( cd $(dirname $0) ; pwd -P )
+SRCDIR=$1
+HOST=${PGHOST:-localhost}
+PORT=${PGPORT:-5432}
+
+if [ -z "$SRCDIR" ]
+then
+  echo "Please choose one of the available databases to upload"
+  exit 1
+else
+  SRCDIR=$(basename $SRCDIR)
+fi
+SOURCE_PATH=$BASEPATH/$SRCDIR
+if [ ! -d "$SOURCE_PATH" ]
+then
+  echo "Database directory ${SOURCE_PATH} does not exist"
+  exit 1
+fi
+echo "The database files are in "$SOURCE_PATH
+
+if [ -f "$SOURCE_PATH/db.deploy.env" ]
+  then
+    source $SOURCE_PATH/db.deploy.env
+fi
+
+# If $SOURCE_PATH/db.deploy.env does not exist, report error and exit
+if [ -z "$TARGET_DB_NAME" ]
+  then
+    echo "The file $SOURCE_PATH/db.deploy.env does not exist or does not contain the variable TARGET_DB_NAME"
+    exit 1
+fi
+
+echo "uploading database '${TARGET_DB_NAME}' on ${HOST}:${PORT}"
+echo
+
+# Expects a list of ddl files in order to be applied. The easy way to seed the file is to list all .sql
+# files:
+#   find -s  ddl -type file -name "*.sql" > ddlfiles
+# Then edit and sort the files as necessary.
+
+DDL_FILES=$SOURCE_PATH/ddlfiles
+
+if [ ! -f "$DDL_FILES" ]
+  then
+    echo "Could not find the list of ddl files to upload. Please make sure the files are listed in a file called 'ddlfiles'"
+    exit -1
+fi
+
+TARGET_FILE=$BASEPATH/amalgam.sql
+
+if [ -f "$TARGET_FILE" ]
+  then
+    echo "Removing existing file $TARGET_FILE"
+    rm $TARGET_FILE
+fi
+
+# http://unix.stackexchange.com/questions/24260/reading-lines-from-a-file-with-bash-for-vs-while/24278#24278
+while read -u 3 FILE; do
+    echo "========================="
+    echo "Applying ddl/$FILE"
+    # Replace :owner_role, :access_role, and :public_role with roles from db.env file
+    sed -e "s/:owner_role/\"$OWNER_ROLE\"/g" -e "s/:access_role/\"$ACCESS_ROLE\"/g" -e "s/:public_role/\"$PUBLIC_ROLE\"/g" $SOURCE_PATH/$FILE >> $TARGET_FILE
+    rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+    echo "" >> $TARGET_FILE
+done 3< $DDL_FILES
+
+if [ -f "$SOURCE_PATH/99_default_data.sql" ]
+then
+  echo "========================="
+  echo "Appending default data"
+  cat $SOURCE_PATH/99_default_data.sql >> $TARGET_FILE
+  rc=$?; if [[ $rc != 0 ]]; then exit $rc; fi
+fi

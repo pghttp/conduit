@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+
+# Synopsis
+# --------
+#
+# ./build-assets <app_root> <publish-dir>
+#
+# This script is used to package elm assets ready for deployment.
+# It is expected to be run from the root of the application directory.
+# It should:
+#   - Concatenate and minify all CSS and JS files
+#   - Replace references to the original files with the new, versioned files
+#   - Copy the versioned files to the publish directory
+#   - Copy the views to the publish directory
+#
+# We expect to have Elm already compiled to elm.js and the index.html file in the root of the app.
+#
+# We'll parse index.html and extract css and js file paths, pass these two to esbuild to minify and concatenate.
+# We'll then calculate sha1 of each produced file, and copy the files to the publish directory.
+# Finally, we'll insert the new file names into the index.html file, and copy it to the publish directory.
+
+BASEPATH=$( cd $(dirname $0) ; pwd -P )
+SRCDIR=$1
+
+echo "Building assets for ${SRCDIR}; base path is ${BASEPATH}"
+exit 0
+
+VIEWS_TARGET=$1
+ASSET_TARGET=$2
+ASSET_VERSION=$3
+
+ASSET_VERSIONED_TARGET=${ASSET_TARGET}/${ASSET_VERSION}
+DIR=${ECS_DEVENV_ROOT}/source
+
+mkdir -p ${ASSET_TARGET}/{js,css,external}
+mkdir -p ${ASSET_VERSIONED_TARGET}
+mkdir -p ${VIEWS_TARGET}
+
+# Find scripts that need to be copied verbatim
+# Development-only scripts should be tagged with no-deploy="true"
+SCRIPTS=$(ag --nofilename '<script' ${VIEWS_TARGET}/Views \
+  | ag --nocolor 'src=' \
+  | xidel -se "//script[not(@data-min-target) and not(@no-deploy)]/@src" - \
+  | grep -v _digest_ | sort | uniq \
+  | sed -e "s/\$\!SiteRoot/Ecs.Web/g")
+
+for S in $SCRIPTS;
+do
+  T=${S/Ecs.Web\/assets/$ASSET_TARGET}
+  mkdir -p $(dirname $T)
+  echo "Copying $S -> ${T}"
+  cp ${DIR}/$S ${T}
+done
+
+LAYOUTS=$(ag -l --nocolor 'data-min-target' ${VIEWS_TARGET})
+
+for TPL in $LAYOUTS;
+do
+  echo "Processing ${TPL}"
+  PHOLDS=
+  FNAMES=
+  JS_TARGETS=$(xidel -se "join(distinct-values(//script/@data-min-file))" $TPL)
+  if [ -n "$JS_TARGETS" ]; then
+    echo "    Found js targets: ${JS_TARGETS}"
+    for T in $JS_TARGETS
+    do
+      JS_FILES=$(xidel -se "join(//script[@data-min-target='${T}']/@src)" $TPL | sed -e "s|\$\!SiteRoot|${DIR}/Ecs.Web|g")
+      if [ -n "$JS_FILES" ]; then
+        echo "    Concatenating js files for target ${T}"
+        SHA=$(cat $JS_FILES | sha1sum | cut -c1-40)
+        FNAMES="${FNAMES} ${T}.${SHA}.js"
+        PHOLDS="${PHOLDS} ${T}._digest_.js"
+        cat $JS_FILES | uglifyjs -c -m -o ${ASSET_VERSIONED_TARGET}/js/${T}.${SHA}.js
+      fi
+    done
+  fi
+
+  CSS_TARGETS=$(xidel -se "join(distinct-values(//link/@data-min-file))" $TPL)
+  if [ -n "$CSS_TARGETS" ]; then \
+    echo "    Found css targets: ${CSS_TARGETS}"
+    for T in $CSS_TARGETS
+    do
+      CSS_FILES=$(xidel -se "join(//link[@data-min-target='${T}']/@href)" $TPL | sed -e "s|\$\!SiteRoot|${DIR}/Ecs.Web|g")
+      if [ -n "$CSS_FILES" ]; then
+        echo "    Concatenating css files for target ${T}"
+        SHA=$(cat $CSS_FILES | sha1sum | cut -c1-40)
+        FNAMES="${FNAMES} ${T}.${SHA}.css"
+        PHOLDS="${PHOLDS} ${T}._digest_.css"
+        cat $CSS_FILES | java -jar ${DIR}/Build/tools/yuicompressor-2.4.8.jar --type css -o ${ASSET_VERSIONED_TARGET}/css/${T}.${SHA}.css
+      fi
+    done
+  fi
+  set -- $FNAMES
+  for P in $PHOLDS
+  do
+    L="$1"; shift
+    echo "    ${P} --> ${L}"
+    sed -i '' -e "s/${P}/${L}/" $TPL
+    #sed -i '' -e "s/_asset_version_/${ASSET_VERSION}/" $TPL
+  done
+  echo
+done
